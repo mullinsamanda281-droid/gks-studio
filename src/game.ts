@@ -8,6 +8,10 @@ import { Player } from './player.js';
 import { Enemy } from './enemy.js';
 import { Match, UI } from './match.js';
 import { InputState } from './input.js';
+import { PickupManager, HazardManager } from './powerups.js';
+import { Progression } from './progression.js';
+import { SettingsManager, SettingsPanel } from './settings.js';
+import { GameMode, HILL_CENTER, HILL_RADIUS } from './modes.js';
 
 export class Game {
   pw = new PW();
@@ -18,6 +22,11 @@ export class Game {
   match!: Match;
   ui!: UI;
   input = new InputState();
+  pickups!: PickupManager;
+  hazards!: HazardManager;
+  progression = new Progression();
+  settings!: SettingsManager;
+  mode = new GameMode('ffa');
 
   private scene = new THREE.Scene();
   private cam!: THREE.PerspectiveCamera;
@@ -25,6 +34,7 @@ export class Game {
   private enemies: Enemy[] = [];
   private clock = new THREE.Clock();
   private accumulator = 0;
+  private panel!: SettingsPanel;
 
   async init() {
     this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas') as HTMLCanvasElement, antialias: true, powerPreference: 'high-performance' });
@@ -74,11 +84,31 @@ export class Game {
       this.enemies.push(new Enemy(this.scene, this.pw, this.player, this.fx, this.audio, sp.x, sp.z, Math.min(1, 0.3 + i * 0.12)));
     }
 
+    this.pickups = new PickupManager(this.scene, this.pw, this.fx, this.audio);
+    this.pickups.setSpawns(spawns.slice(0, 6));
+    this.pickups.onPickup = (kind) => this.ui.logKill(0);
+
+    this.hazards = new HazardManager(this.scene, this.pw, this.fx, this.audio);
+    this.hazards.build();
+
+    this.settings = new SettingsManager(this.audio);
+    this.panel = new SettingsPanel(this.settings);
+    this.settings.onChange = (s) => this.applySettings(s.fov, s.quality);
+    this.applySettings(this.settings.settings.fov, this.settings.settings.quality);
+
     addEventListener('resize', () => { this.cam.aspect = innerWidth / innerHeight; this.cam.updateProjectionMatrix(); this.renderer.setSize(innerWidth, innerHeight); });
     this.gameLoop();
   }
 
   private allTargets(): Char[] { return [this.player, ...this.enemies]; }
+
+  private applySettings(fov: number, quality: 'low' | 'medium' | 'high') {
+    const preset = this.settings.getPreset();
+    this.cam.fov = fov;
+    this.cam.updateProjectionMatrix();
+    this.renderer.shadowMap.enabled = preset.shadows;
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, preset.pixelRatio));
+  }
 
   private gameLoop = () => {
     requestAnimationFrame(this.gameLoop);
@@ -91,15 +121,28 @@ export class Game {
       this.player.updatePhysics(1 / 60);
       for (const e of this.enemies) e.updatePhysics(1 / 60);
       for (const e of this.enemies) {
-        if (e.alive && e.hp <= 0) { e.die(); this.match.registerKill(); this.fx.death(v3(e.body.translation())); }
+        if (e.alive && e.hp <= 0) {
+          e.die();
+          this.match.registerKill();
+          this.mode.onKill(true);
+          this.progression.recordKill(false, this.match.combo);
+          this.fx.death(v3(e.body.translation()));
+        }
       }
-      if (this.player.alive && this.player.hp <= 0) { this.player.die(); this.fx.death(v3(this.player.body.translation())); }
+      if (this.player.alive && this.player.hp <= 0) {
+        this.player.die();
+        this.progression.recordDeath();
+        this.fx.death(v3(this.player.body.translation()));
+      }
+      this.hazards.update(1 / 60, this.allTargets());
       this.match.update(1 / 60);
+      this.mode.update(1 / 60, this.playerInHill(), this.enemies.filter(e => e.alive).length);
       this.accumulator -= 1 / 60;
     }
 
     this.player.updateCamera(dt);
     this.wm.update(dt);
+    this.pickups.update(dt, this.player);
     this.fx.update(dt);
     this.ui.update(dt);
 
@@ -110,8 +153,15 @@ export class Game {
       if (this.wm.fire(dir, new THREE.Vector3(pos.x, pos.y + 1, pos.z))) inp.attack = false;
     }
 
-    const shake = this.fx.getShakeOffset();
-    if (shake.lengthSq() > 0) this.cam.position.add(shake);
+    if (this.settings.settings.screenShake) {
+      const shake = this.fx.getShakeOffset();
+      if (shake.lengthSq() > 0) this.cam.position.add(shake);
+    }
     this.renderer.render(this.scene, this.cam);
   };
+
+  private playerInHill(): boolean {
+    const p = this.player.body.translation();
+    return Math.hypot(p.x - HILL_CENTER.x, p.z - HILL_CENTER.z) < HILL_RADIUS;
+  }
 }
