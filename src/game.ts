@@ -36,6 +36,11 @@ export class Game {
   private accumulator = 0;
   private panel!: SettingsPanel;
 
+  // Scratch vectors reused every frame to avoid per-frame allocations.
+  private readonly aimDir = new THREE.Vector3();
+  private readonly muzzlePos = new THREE.Vector3();
+  private readonly hitDir = new THREE.Vector3();
+
   async init() {
     this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas') as HTMLCanvasElement, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(innerWidth, innerHeight);
@@ -154,9 +159,10 @@ export class Game {
 
     const inp = this.input;
     if (inp.attack && this.player.alive) {
-      const dir = new THREE.Vector3(); this.cam.getWorldDirection(dir);
+      this.cam.getWorldDirection(this.aimDir);
       const pos = this.player.body.translation();
-      if (this.wm.fire(dir, new THREE.Vector3(pos.x, pos.y + 1, pos.z))) inp.attack = false;
+      this.muzzlePos.set(pos.x, pos.y + 1, pos.z);
+      if (this.wm.fire(this.aimDir, this.muzzlePos)) inp.attack = false;
     }
 
     if (this.settings.settings.screenShake) {
@@ -190,6 +196,7 @@ export class Game {
     }
     if (!nearest) return;
     const q = nearest.body.translation();
-    this.ui.showDamageFrom(new THREE.Vector3(q.x - p.x, 0, q.z - p.z).normalize(), this.player.lookYaw);
+    this.hitDir.set(q.x - p.x, 0, q.z - p.z).normalize();
+    this.ui.showDamageFrom(this.hitDir, this.player.lookYaw);
   }
 }
