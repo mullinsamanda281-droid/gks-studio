@@ -103,11 +103,16 @@ export class Game {
   private allTargets(): Char[] { return [this.player, ...this.enemies]; }
 
   private applySettings(fov: number, quality: 'low' | 'medium' | 'high') {
+    const s = this.settings.settings;
     const preset = this.settings.getPreset();
     this.cam.fov = fov;
     this.cam.updateProjectionMatrix();
     this.renderer.shadowMap.enabled = preset.shadows;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, preset.pixelRatio));
+    this.player.baseFov = fov;
+    this.player.sensitivity = s.sensitivity;
+    this.player.invertY = s.invertY;
+    document.body.style.fontSize = `${s.uiScale * 100}%`;
   }
 
   private gameLoop = () => {
@@ -129,6 +134,7 @@ export class Game {
           this.fx.death(v3(e.body.translation()));
         }
       }
+      this.trackIncomingDamage();
       if (this.player.alive && this.player.hp <= 0) {
         this.player.die();
         this.progression.recordDeath();
@@ -163,5 +169,27 @@ export class Game {
   private playerInHill(): boolean {
     const p = this.player.body.translation();
     return Math.hypot(p.x - HILL_CENTER.x, p.z - HILL_CENTER.z) < HILL_RADIUS;
+  }
+
+  private lastPlayerHp = 100;
+
+  /** Shows a directional arrow toward the nearest live enemy when the player loses health. */
+  private trackIncomingDamage() {
+    if (!this.player.alive) { this.lastPlayerHp = this.player.hp; return; }
+    if (this.player.hp >= this.lastPlayerHp) { this.lastPlayerHp = this.player.hp; return; }
+    this.lastPlayerHp = this.player.hp;
+
+    const p = this.player.body.translation();
+    let nearest: Enemy | null = null;
+    let bestDist = Infinity;
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      const q = e.body.translation();
+      const d = Math.hypot(q.x - p.x, q.z - p.z);
+      if (d < bestDist) { bestDist = d; nearest = e; }
+    }
+    if (!nearest) return;
+    const q = nearest.body.translation();
+    this.ui.showDamageFrom(new THREE.Vector3(q.x - p.x, 0, q.z - p.z).normalize(), this.player.lookYaw);
   }
 }

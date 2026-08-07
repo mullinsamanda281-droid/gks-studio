@@ -16,6 +16,10 @@ export class Player extends Char {
   private dashCooldown = 0;
   private dashDir = new THREE.Vector3();
   private recoilPitch = 0;
+  private zoom = 0;
+  sensitivity = 1;
+  invertY = false;
+  baseFov = 70;
 
   readonly WALK_SPEED = 6;
   readonly SPRINT_SPEED = 10;
@@ -121,13 +125,29 @@ export class Player extends Char {
 
   updateCamera(dt: number) {
     if (this.input.mouseLocked) {
-      this.yaw += this.input.mouseX; this.pitch += this.input.mouseY;
+      const yScale = this.invertY ? -1 : 1;
+      this.yaw += this.input.mouseX * this.sensitivity;
+      this.pitch += this.input.mouseY * this.sensitivity * yScale;
       this.pitch = Math.max(-1.2, Math.min(1.2, this.pitch + this.recoilPitch));
       this.input.mouseX = 0; this.input.mouseY = 0;
     }
+
+    const aiming = this.input.aim;
+    this.zoom += ((aiming ? 1 : 0) - this.zoom) * (1 - Math.exp(-12 * dt));
+    const distance = 6 - this.zoom * 2.4;
+    const targetFov = this.baseFov - this.zoom * 18;
+    if (Math.abs(this.cam.fov - targetFov) > 0.05) {
+      this.cam.fov += (targetFov - this.cam.fov) * (1 - Math.exp(-12 * dt));
+      this.cam.updateProjectionMatrix();
+    }
+
     const pos = this.body.translation();
     const eye = new THREE.Vector3(pos.x + Math.sin(this.yaw + Math.PI / 2) * 0.4, pos.y + 1.1, pos.z + Math.cos(this.yaw + Math.PI / 2) * 0.4);
-    const camTarget = new THREE.Vector3(pos.x - Math.sin(this.yaw) * Math.cos(this.pitch) * 6, pos.y + 1.3 + Math.sin(this.pitch) * 6, pos.z - Math.cos(this.yaw) * Math.cos(this.pitch) * 6);
+    const camTarget = new THREE.Vector3(
+      pos.x - Math.sin(this.yaw) * Math.cos(this.pitch) * distance,
+      pos.y + 1.3 + Math.sin(this.pitch) * distance,
+      pos.z - Math.cos(this.yaw) * Math.cos(this.pitch) * distance
+    );
     this.cam.position.lerp(camTarget, 1 - Math.exp(-10 * dt));
     this.cam.lookAt(eye); setCameraListener(this.cam.position);
   }

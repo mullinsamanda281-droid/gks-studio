@@ -37,6 +37,7 @@ export class Match {
     this.winner = this.score > 0 ? 'PLAYER' : 'NOBODY';
     this.game.audio.play('cheer');
     this.game.fx.slowMotion(0.3, 0.5);
+    this.game.progression.recordMatch(this.winner === 'PLAYER', 180 - Math.max(0, this.time));
     this.game.ui.showMatchEnd(this.winner, this.score);
   }
 
@@ -81,7 +82,29 @@ export class UI {
     setTimeout(() => entry.remove(), 3000);
   }
 
-  showMatchEnd(winner: string, score: number) { this.endTitle.textContent = `${winner} WINS! Score: ${score}`; this.endScreen.classList.add('show'); }
+  showMatchEnd(winner: string, score: number) {
+    const p = this.game.progression;
+    const acc = Math.round(p.getAccuracy() * 100);
+    const kd = p.getKD().toFixed(2);
+    this.endTitle.innerHTML = `${winner} WINS!<br><span style="font-size:18px;opacity:0.85">` +
+      `Score ${score} &nbsp;·&nbsp; Kills ${p.profile.stats.kills} &nbsp;·&nbsp; ` +
+      `Accuracy ${acc}% &nbsp;·&nbsp; K/D ${kd} &nbsp;·&nbsp; Level ${p.profile.level}</span>`;
+    this.endScreen.classList.add('show');
+  }
+
+  showDamageFrom(worldDir: THREE.Vector3, camYaw: number) {
+    const angle = Math.atan2(worldDir.x, worldDir.z) - camYaw;
+    const arrow = document.createElement('div');
+    arrow.textContent = '▲';
+    arrow.style.cssText = [
+      'position:fixed', 'left:50%', 'top:50%', 'color:#ff3b3b', 'font-size:34px',
+      'pointer-events:none', 'z-index:140', 'transition:opacity .6s',
+      `transform:rotate(${angle}rad) translate(-50%,-160px)`
+    ].join(';');
+    document.body.appendChild(arrow);
+    setTimeout(() => { arrow.style.opacity = '0'; }, 250);
+    setTimeout(() => arrow.remove(), 900);
+  }
   hideMatchEnd() { this.endScreen.classList.remove('show'); }
   clearLog() { this.killFeed.innerHTML = ''; }
 
