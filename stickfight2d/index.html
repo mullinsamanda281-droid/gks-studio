@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stick Fight 2D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0b0d14;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    min-height: 100vh; gap: 12px;
+    font-family: system-ui, sans-serif; color: #9ca3af;
+  }
+  canvas {
+    background: #11131c;
+    border: 1px solid #262b3a;
+    border-radius: 8px;
+    max-width: 100vw;
+    max-height: 82vh;
+    cursor: crosshair;
+  }
+  .keys { display: flex; gap: 18px; font-size: 13px; flex-wrap: wrap; justify-content: center; }
+  .keys b { color: #e5e7eb; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1280" height="720"></canvas>
+<div class="keys">
+  <span><b>A/D</b> move</span>
+  <span><b>W</b> or <b>Space</b> jump</span>
+  <span><b>Mouse</b> aim</span>
+  <span><b>Click</b> shoot</span>
+  <span><b>P</b> pause</span>
+  <span><b>R</b> restart</span>
+  <span>walk over crates to pick up weapons</span>
+</div>
+<script type="module">
+  import { Game } from './src/game.js';
+  new Game(document.getElementById('game')).start();
+</script>
+</body>
+</html>
