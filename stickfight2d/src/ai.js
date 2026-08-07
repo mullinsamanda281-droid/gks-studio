@@ -13,7 +13,7 @@ export class Bot {
     this.think = 0;
     this.wander = Math.random() < 0.5 ? -1 : 1;
     this.jumpUrge = 0;
-    this.input = { left: false, right: false, jump: false, drop: false, fire: false, aim: 0 };
+    this.input = { left: false, right: false, jump: false, block: false, attack: false, aim: 0 };
   }
 
   /**
@@ -25,7 +25,7 @@ export class Bot {
   update(others, drops, world) {
     const me = this.fighter;
     const input = this.input;
-    input.left = input.right = input.jump = input.fire = false;
+    input.left = input.right = input.jump = input.attack = input.block = false;
 
     if (!me.alive) return input;
 
@@ -40,8 +40,9 @@ export class Bot {
     const dy = gy - me.hip.y;
     const dist = Math.abs(dx);
 
-    // Keep mid range when armed, close the gap when hunting a crate.
-    const preferred = crate ? 8 : me.weapon?.spec.melee ? 26 : 190;
+    // Crates first, then brawl at fists range or hold mid range when armed.
+    const melee = !me.weapon || me.weapon.spec.melee;
+    const preferred = crate ? 8 : melee ? 30 : 190;
     if (dist > preferred + 30) {
       if (dx > 0) input.right = true; else input.left = true;
     } else if (dist < preferred - 40 && !crate) {
@@ -64,13 +65,16 @@ export class Bot {
     if (world) this.avoidLedge(input, world);
     if (this.jumpUrge > 0) { input.jump = true; this.jumpUrge--; }
 
-    if (target && me.weapon) {
+    if (target) {
       const aimX = target.chest.x - me.chest.x;
       const aimY = target.chest.y - me.chest.y;
       const jitter = (1 - this.skill) * 0.5;
       input.aim = Math.atan2(aimY, aimX) + (Math.random() - 0.5) * jitter;
-      const range = me.weapon.spec.melee ? 44 : 460;
-      input.fire = Math.hypot(aimX, aimY) < range && Math.random() < 0.35 + this.skill * 0.5;
+
+      // Unarmed bots still commit to punches instead of standing around.
+      const range = me.weapon ? (me.weapon.spec.melee ? 46 : 460) : 38;
+      const willing = me.weapon ? 0.35 + this.skill * 0.5 : 0.6 + this.skill * 0.4;
+      input.attack = Math.hypot(aimX, aimY) < range && Math.random() < willing;
     }
 
     return input;

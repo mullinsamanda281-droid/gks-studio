@@ -23,12 +23,20 @@ directly from disk will not load.
 |-------|--------|
 | `A` / `D` | Move |
 | `W` / `Space` | Jump |
+| `Shift` | Block (cuts damage, roots you) |
 | Mouse | Aim |
-| Click | Shoot |
+| Click | Punch, or fire the held weapon |
 | `P` | Pause |
 | `R` | Restart match |
 
-Walk over a crate to pick up the weapon inside.
+Walk over a crate to pick up the weapon inside. With empty hands you punch —
+weak but always available, so being disarmed is never a death sentence.
+
+## Hazards
+
+Two of the three arenas carry a hazard: a saw blade that tracks back and forth
+along the floor, and a ceiling laser that pulses on and off. Both kill on
+contact and fling the body sideways, which usually means a ring-out.
 
 ## Weapons
 
@@ -68,9 +76,12 @@ Headless simulations that run the real modules — no browser required.
 ```bash
 node test/smoke.mjs        # 2400 frames of bot-vs-bot combat
 node test/integration.mjs  # full match to a winner via the Game class
+node test/punch.mjs        # melee, blocking and ragdoll state
 ```
 
-`smoke.mjs` asserts bots find crates, shoot, stay on the map and keep finite
+`smoke.mjs` asserts bots find crates, attack, stay on the map and keep finite
 coordinates. `integration.mjs` stubs a canvas, drives the real game loop, and
 confirms rounds advance, levels rotate and a match resolves without leaking
-bullets or crates.
+bullets or crates. `punch.mjs` covers the unarmed path: cooldowns, knockback
+direction, block damage reduction, and that the rig goes limp on death and is
+restored on respawn.

@@ -3,12 +3,13 @@ import { Fighter } from './fighter.js';
 import { DropManager, Bullet } from './weapons.js';
 import { Effects, Audio } from './fx.js';
 import { Bot } from './ai.js';
-import { buildLevels, drawLevel } from './level.js';
+import { buildLevels, drawLevel, updateHazards, hazardBounds } from './level.js';
 
 const COLORS = ['#38bdf8', '#f87171', '#4ade80', '#fbbf24'];
 const NAMES = ['YOU', 'BOT 1', 'BOT 2', 'BOT 3'];
-const ROUND_END_DELAY = 130;
+const ROUND_END_DELAY = 110;
 const WINS_TO_TAKE_MATCH = 5;
+const HAZARD_DAMAGE = 34;
 
 export class Game {
   /** @param {HTMLCanvasElement} canvas */
@@ -35,6 +36,8 @@ export class Game {
 
     this.keys = new Set();
     this.mouse = { x: this.width / 2, y: this.height / 2, down: false };
+    this.prevMouseDown = false;
+    this.tick = 0;
     this.roundOver = false;
     this.roundTimer = 0;
     this.winner = -1;
@@ -88,7 +91,6 @@ export class Game {
       this.fighters.forEach((f, i) => {
         const s = spawns[i % spawns.length];
         f.respawn(s.x, s.y);
-        f.weapon = null;
       });
     }
   }
@@ -101,12 +103,16 @@ export class Game {
 
   update() {
     if (this.paused || this.matchOver) return;
+    this.tick++;
 
+    updateHazards(this.level.hazards, this.tick);
     this.drops.update(this.world);
     this.updateFighters();
     this.updateBullets();
+    this.applyHazards();
     this.effects.update();
     this.checkRoundEnd();
+    this.prevMouseDown = this.mouse.down;
   }
 
   updateFighters() {
@@ -115,7 +121,8 @@ export class Game {
       f.control(input);
       this.world.step(f.points, f.sticks);
 
-      if (input.fire) this.fire(f, input.aim);
+      if (input.attack) this.attack(f, input.aim);
+
       if (this.drops.tryPickup(f)) {
         this.audio.play('pickup');
         this.effects.float(f.weapon.spec.name, f.head.x, f.head.y - 30, f.color);
@@ -124,52 +131,84 @@ export class Game {
       if (f.alive && this.world.isOutOfBounds(f.chest.x, f.chest.y)) {
         f.kill();
         this.audio.play('death');
-        this.effects.float('OUT!', Math.min(Math.max(f.chest.x, 60), this.width - 60), this.height * 0.4, f.color);
+        const x = Math.min(Math.max(f.chest.x, 70), this.width - 70);
+        this.effects.float('OUT!', x, this.height * 0.4, f.color);
       }
     }
   }
 
-  /** @returns {{left:boolean,right:boolean,jump:boolean,drop:boolean,fire:boolean,aim:number}} */
+  /** @returns {{left:boolean,right:boolean,jump:boolean,block:boolean,attack:boolean,aim:number}} */
   playerInput() {
     const me = this.fighters[0];
     const aim = Math.atan2(this.mouse.y - me.chest.y, this.mouse.x - me.chest.x);
+    // Unarmed attacks fire on the click edge so punches cannot be held down.
+    const armed = Boolean(me.weapon);
+    const attack = armed ? this.mouse.down : (this.mouse.down && !this.prevMouseDown);
     return {
       left: this.keys.has('KeyA') || this.keys.has('ArrowLeft'),
       right: this.keys.has('KeyD') || this.keys.has('ArrowRight'),
       jump: this.keys.has('KeyW') || this.keys.has('Space') || this.keys.has('ArrowUp'),
-      drop: this.keys.has('KeyS') || this.keys.has('ArrowDown'),
-      fire: this.mouse.down,
+      block: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight'),
+      attack,
       aim
     };
   }
 
   /**
    * @param {Fighter} f
-   * @returns {{left:boolean,right:boolean,jump:boolean,drop:boolean,fire:boolean,aim:number}}
+   * @returns {{left:boolean,right:boolean,jump:boolean,block:boolean,attack:boolean,aim:number}}
    */
   botInput(f) {
     const bot = this.bots.find((b) => b.fighter === f);
-    return bot
-      ? bot.update(this.fighters, this.drops, this.world)
-      : { left: false, right: false, jump: false, drop: false, fire: false, aim: 0 };
+    if (!bot) return { left: false, right: false, jump: false, block: false, attack: false, aim: 0 };
+    return bot.update(this.fighters, this.drops, this.world);
+  }
+
+  /**
+   * Route an attack to gunfire, a melee swing, or a bare-handed punch.
+   * @param {Fighter} f
+   * @param {number} aim
+   */
+  attack(f, aim) {
+    if (!f.alive || f.stun > 0) return;
+    if (!f.weapon) { this.punch(f, aim); return; }
+    if (f.weapon.spec.melee) { this.swing(f, aim); return; }
+    this.shoot(f, aim);
   }
 
   /**
    * @param {Fighter} f
    * @param {number} aim
    */
-  fire(f, aim) {
-    if (!f.alive || !f.weapon || f.fireCooldown > 0 || f.stun > 0) return;
+  punch(f, aim) {
+    const hit = f.punch(aim);
+    if (!hit) return;
+    this.audio.play('swing');
+    this.effects.burst(hit.x, hit.y, 4, '#e5e7eb', 2.5);
+
+    for (const other of this.fighters) {
+      if (other === f || !other.alive) continue;
+      if (Math.hypot(other.chest.x - hit.x, other.chest.y - hit.y) > 34) continue;
+      const kx = Math.cos(aim) * f.punchKnock;
+      const ky = Math.sin(aim) * f.punchKnock - 3;
+      const killed = other.damage(f.punchDamage, kx, ky);
+      this.effects.burst(other.chest.x, other.chest.y, 8, '#fde68a', 4);
+      this.effects.addShake(7);
+      this.audio.play('hit');
+      if (killed) this.onKill(other);
+    }
+  }
+
+  /**
+   * @param {Fighter} f
+   * @param {number} aim
+   */
+  shoot(f, aim) {
+    if (f.fireCooldown > 0) return;
     const w = f.weapon;
+    if (w.ammo <= 0) { f.weapon = null; return; }
     f.fireCooldown = w.spec.rate;
     f.facing = Math.cos(aim) >= 0 ? 1 : -1;
-
-    if (w.spec.melee) {
-      this.swing(f, aim);
-      return;
-    }
-
-    if (w.ammo <= 0) { f.weapon = null; return; }
     w.ammo--;
 
     const muzzleX = f.chest.x + Math.cos(aim) * 22;
@@ -197,20 +236,25 @@ export class Game {
    * @param {number} aim
    */
   swing(f, aim) {
-    const reach = 46;
+    if (f.fireCooldown > 0) return;
+    f.fireCooldown = f.weapon.spec.rate;
+    f.punchAnim = 9;
+    f.facing = Math.cos(aim) >= 0 ? 1 : -1;
+
+    const reach = 48;
     const hx = f.chest.x + Math.cos(aim) * reach;
     const hy = f.chest.y + Math.sin(aim) * reach;
     this.audio.play('swing');
-    this.effects.burst(hx, hy, 6, '#eab308', 3);
+    this.effects.burst(hx, hy, 7, '#eab308', 3.5);
 
     for (const other of this.fighters) {
       if (other === f || !other.alive) continue;
-      if (Math.hypot(other.chest.x - hx, other.chest.y - hy) > 40) continue;
+      if (Math.hypot(other.chest.x - hx, other.chest.y - hy) > 42) continue;
       const kx = Math.cos(aim) * f.weapon.spec.knock;
       const ky = Math.sin(aim) * f.weapon.spec.knock - 3;
       const killed = other.damage(f.weapon.spec.damage, kx, ky);
-      this.effects.blood(other.chest.x, other.chest.y, Math.sign(kx) || 1);
-      this.effects.addShake(9);
+      this.effects.burst(other.chest.x, other.chest.y, 10, '#fde68a', 5);
+      this.effects.addShake(10);
       this.audio.play('hit');
       if (killed) this.onKill(other);
     }
@@ -235,7 +279,7 @@ export class Game {
           this.explode(b);
         } else {
           const killed = f.damage(b.damage, b.vx * b.knock * 0.06, b.vy * b.knock * 0.06 - 1.5);
-          this.effects.blood(b.x, b.y, Math.sign(b.vx) || 1);
+          this.effects.burst(b.x, b.y, 7, '#fca5a5', 4);
           this.effects.addShake(4);
           this.audio.play('hit');
           if (killed) this.onKill(f);
@@ -261,7 +305,7 @@ export class Game {
 
   /** @param {Bullet} b */
   explode(b) {
-    const radius = 110;
+    const radius = 115;
     this.effects.explosion(b.x, b.y);
     this.audio.play('explode');
     for (const f of this.fighters) {
@@ -276,12 +320,33 @@ export class Game {
     }
   }
 
+  /** Saws and lasers kill on contact and fling the body clear. */
+  applyHazards() {
+    for (const hz of this.level.hazards) {
+      const b = hazardBounds(hz);
+      if (!b.active) continue;
+      for (const f of this.fighters) {
+        if (!f.alive) continue;
+        const inside = f.points.some(
+          (p) => p.x > b.x - 6 && p.x < b.x + b.w + 6 && p.y > b.y - 6 && p.y < b.y + b.h + 6
+        );
+        if (!inside) continue;
+        const dir = Math.sign(f.chest.x - (b.x + b.w / 2)) || 1;
+        const killed = f.damage(HAZARD_DAMAGE, dir * 9, -7);
+        this.effects.burst(f.chest.x, f.chest.y, 12, '#f87171', 6);
+        this.effects.addShake(8);
+        this.audio.play('hit');
+        if (killed) this.onKill(f);
+      }
+    }
+  }
+
   /** @param {Fighter} f */
   onKill(f) {
     this.audio.play('death');
-    this.effects.burst(f.chest.x, f.chest.y, 22, f.color, 7);
-    this.effects.addShake(12);
-    this.effects.float('KO', f.chest.x, f.chest.y - 26, f.color);
+    this.effects.burst(f.chest.x, f.chest.y, 26, f.color, 8);
+    this.effects.burst(f.chest.x, f.chest.y, 12, '#ffffff', 5);
+    this.effects.addShake(13);
   }
 
   checkRoundEnd() {
@@ -292,7 +357,7 @@ export class Game {
       this.winner = alive.length === 1 ? alive[0].id : -1;
       if (this.winner >= 0) {
         this.wins[this.winner]++;
-        this.effects.slow(45);
+        this.effects.slow(40);
         this.audio.play('win');
         if (this.wins[this.winner] >= WINS_TO_TAKE_MATCH) this.matchOver = true;
       }
@@ -318,7 +383,7 @@ export class Game {
     this.drops.draw(ctx);
     for (const b of this.bullets) b.draw(ctx);
     for (const f of this.fighters) { f.draw(ctx); this.drawWeapon(ctx, f); }
-    for (const f of this.fighters) f.drawHealth(ctx);
+    for (const f of this.fighters) f.drawStatus(ctx);
     this.effects.draw(ctx);
 
     ctx.restore();
@@ -347,33 +412,38 @@ export class Game {
     ctx.font = 'bold 14px system-ui';
     this.fighters.forEach((f, i) => {
       const x = 18 + i * 150;
+      ctx.globalAlpha = f.alive ? 1 : 0.4;
       ctx.fillStyle = f.color;
       ctx.fillRect(x, 18, 10, 10);
-      ctx.fillStyle = f.alive ? '#e5e7eb' : '#6b7280';
-      ctx.fillText(`${NAMES[i]}  ${'★'.repeat(this.wins[i])}`, x + 16, 28);
+      ctx.fillStyle = '#e5e7eb';
+      ctx.fillText(`${NAMES[i]} ${'●'.repeat(this.wins[i])}`, x + 16, 28);
       if (i === 0) {
         ctx.fillStyle = '#9ca3af';
-        ctx.fillText(f.weapon ? `${f.weapon.spec.name} ${f.weapon.ammo === Infinity ? '' : f.weapon.ammo}` : 'unarmed', x + 16, 46);
+        const label = f.weapon
+          ? `${f.weapon.spec.name}${f.weapon.ammo === Infinity ? '' : ' ' + f.weapon.ammo}`
+          : 'fists';
+        ctx.fillText(label, x + 16, 46);
       }
+      ctx.globalAlpha = 1;
     });
 
     ctx.textAlign = 'center';
     if (this.matchOver) {
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
       ctx.fillRect(0, 0, this.width, this.height);
       ctx.fillStyle = this.fighters[this.winner]?.color ?? '#fff';
-      ctx.font = 'bold 54px system-ui';
-      ctx.fillText(`${NAMES[this.winner]} WINS THE MATCH`, this.width / 2, this.height / 2 - 10);
+      ctx.font = 'bold 52px system-ui';
+      ctx.fillText(`${NAMES[this.winner]} WINS`, this.width / 2, this.height / 2 - 8);
       ctx.fillStyle = '#e5e7eb';
-      ctx.font = '20px system-ui';
-      ctx.fillText('press R to play again', this.width / 2, this.height / 2 + 34);
+      ctx.font = '19px system-ui';
+      ctx.fillText('press R to play again', this.width / 2, this.height / 2 + 32);
     } else if (this.roundOver) {
       ctx.fillStyle = this.winner >= 0 ? this.fighters[this.winner].color : '#e5e7eb';
-      ctx.font = 'bold 40px system-ui';
+      ctx.font = 'bold 38px system-ui';
       ctx.fillText(this.winner >= 0 ? `${NAMES[this.winner]} WINS` : 'DRAW', this.width / 2, this.height / 2);
     } else if (this.paused) {
       ctx.fillStyle = '#e5e7eb';
-      ctx.font = 'bold 40px system-ui';
+      ctx.font = 'bold 38px system-ui';
       ctx.fillText('PAUSED', this.width / 2, this.height / 2);
     }
     ctx.textAlign = 'left';
@@ -381,12 +451,11 @@ export class Game {
 
   loop = () => {
     requestAnimationFrame(this.loop);
-    const steps = this.effects.slowmo > 0 ? (performance.now() % 3 < 1 ? 1 : 0) : 1;
+    const steps = this.effects.slowmo > 0 ? (this.tick % 3 === 0 ? 1 : 0) : 1;
     for (let i = 0; i < steps; i++) this.update();
+    if (steps === 0) this.tick++;
     this.draw();
   };
 
-  start() {
-    this.loop();
-  }
+  start() { this.loop(); }
 }

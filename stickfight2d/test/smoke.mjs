@@ -18,7 +18,7 @@ for(let frame=0; frame<2400; frame++){
   for(const f of fighters){
     const bot = bots.find(b=>b.fighter===f);
     const input = bot.update(fighters, drops, world);
-    if(input.fire) fires++;
+    if(input.attack) fires++;
     f.control(input);
     world.step(f.points, f.sticks);
     if(drops.tryPickup(f)) picked++;
